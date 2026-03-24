@@ -1,8 +1,9 @@
 name: Run Trading Bot
 
 on:
+  workflow_dispatch:   # ✅ enables manual run
   schedule:
-    - cron: "30 3 * * 1-5"  # 9 AM IST
+    - cron: "30 3 * * 1-5"
 
 jobs:
   run-bot:
