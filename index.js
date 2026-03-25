@@ -1,13 +1,15 @@
 import YahooFinance from "yahoo-finance2";
 import nodemailer from "nodemailer";
 
-const yahooFinance = new YahooFinance();
+const yahooFinance = new YahooFinance({
+  suppressNotices: ['yahooSurvey']
+});
 
-// 🔴 ADD YOUR DETAILS
-const EMAIL = process.env.EMAIL || "nihar55chopade@gmail.com";
-const APP_PASSWORD = process.env.APP_PASSWORD || "nqva ppdv gbzo obix";
+// ENV VARIABLES
+const EMAIL = process.env.EMAIL;
+const APP_PASSWORD = process.env.APP_PASSWORD;
 
-// 📩 Email setup
+// MAIL SETUP
 const transporter = nodemailer.createTransport({
   service: "gmail",
   auth: {
@@ -20,104 +22,92 @@ async function sendEmail(message) {
   await transporter.sendMail({
     from: EMAIL,
     to: EMAIL,
-    subject: "📊 Trade Alert",
+    subject: "📊 Smart Trade Alert",
     text: message
   });
 }
 
-// 🔥 IMPROVED LOGIC (HIGH ACCURACY FILTER)
-function generateTrades(price, change) {
-  const trades = [];
-  const atm = Math.round(price / 100) * 100;
-
-  const absChange = Math.abs(change);
-
-  // ❌ Avoid weak market
-  if (absChange < 1.2) {
-    return [];
-  }
-
-  // 🔥 Strong bullish
-  if (change > 1.2) {
-    trades.push({ strike: atm, type: "CE" });
-
-    if (absChange > 1.8) {
-      trades.push({ strike: atm + 100, type: "CE" });
-    }
-  }
-
-  // 🔥 Strong bearish
-  if (change < -1.2) {
-    trades.push({ strike: atm, type: "PE" });
-
-    if (absChange > 1.8) {
-      trades.push({ strike: atm - 100, type: "PE" });
-    }
-  }
-
-  return trades;
+// CORE LOGIC
+function getSignal(change) {
+  if (change > 1) return "CE";
+  if (change < -1) return "PE";
+  return null;
 }
 
-// 🔥 TRADE CALCULATION
+function getATM(price) {
+  return Math.round(price / 100) * 100;
+}
+
+// BETTER ENTRY TIMING (9:15 logic)
+function getEntryTiming() {
+  const now = new Date();
+  const hour = now.getHours();
+  const min = now.getMinutes();
+
+  if (hour === 9 && min <= 20) return "OPEN BREAKOUT";
+  if (hour === 9 && min > 20) return "WAIT FOR RETEST";
+
+  return "MARKET CLOSED / LATE ENTRY";
+}
+
+// TRADE CALCULATION
 function buildTrade(strike, type) {
-  const entry = Math.floor(100 + Math.random() * 40); // simulated premium
+  const premium = 100 + Math.floor(Math.random() * 40); // still approx
 
   return {
     strike,
     type,
-    entry,
-    sl: (entry * 0.8).toFixed(2),
-    target: (entry * 1.4).toFixed(2)
+    entry: premium,
+    sl: (premium * 0.8).toFixed(2),
+    target: (premium * 1.4).toFixed(2)
   };
 }
 
-// 🚀 MAIN BOT
+// MAIN BOT
 async function runBot() {
   try {
-    console.log("📊 FINAL SMART TRADE SYSTEM\n");
+    console.log("📊 PRO TRADE SYSTEM STARTED");
 
-    const symbols = [
-      { name: "NIFTY", symbol: "^NSEI" },
-      { name: "BANKNIFTY", symbol: "^NSEBANK" }
-    ];
+    const nifty = await yahooFinance.quote("^NSEI");
+    const banknifty = await yahooFinance.quote("^NSEBANK");
 
     let message = "📊 TRADE ALERT\n\n";
 
-    for (const s of symbols) {
-      const data = await yahooFinance.quote(s.symbol);
+    // ========= NIFTY =========
+    const niftySignal = getSignal(nifty.regularMarketChangePercent);
 
-      const price = data.regularMarketPrice ?? 0;
-      const change = data.regularMarketChangePercent ?? 0;
+    if (niftySignal) {
+      const atm = getATM(nifty.regularMarketPrice);
 
-      const trades = generateTrades(price, change);
+      const t1 = buildTrade(atm, niftySignal);
+      const t2 = buildTrade(atm + 100, niftySignal);
 
-      message += `📈 ${s.name}\n`;
-
-      if (trades.length === 0) {
-        message += "NO TRADE (Market Weak)\n\n";
-        continue;
-      }
-
-      trades.forEach((t, i) => {
-        const trade = buildTrade(t.strike, t.type);
-
-        message += `
-${i + 1}) BUY ${trade.strike} ${trade.type}
-Entry: ${trade.entry}
-SL: ${trade.sl}
-Target: ${trade.target}
-`;
-      });
-
-      message += "\n";
+      message += `📈 NIFTY\n\n`;
+      message += `1) BUY ${t1.strike} ${t1.type}\nEntry: ${t1.entry}\nSL: ${t1.sl}\nTarget: ${t1.target}\n\n`;
+      message += `2) BUY ${t2.strike} ${t2.type}\nEntry: ${t2.entry}\nSL: ${t2.sl}\nTarget: ${t2.target}\n\n`;
     }
 
-    console.log(message);
+    // ========= BANKNIFTY =========
+    const bankSignal = getSignal(banknifty.regularMarketChangePercent);
 
+    if (bankSignal) {
+      const atm = getATM(banknifty.regularMarketPrice);
+
+      const t1 = buildTrade(atm, bankSignal);
+      const t2 = buildTrade(atm + 100, bankSignal);
+
+      message += `📈 BANKNIFTY\n\n`;
+      message += `1) BUY ${t1.strike} ${t1.type}\nEntry: ${t1.entry}\nSL: ${t1.sl}\nTarget: ${t1.target}\n\n`;
+      message += `2) BUY ${t2.strike} ${t2.type}\nEntry: ${t2.entry}\nSL: ${t2.sl}\nTarget: ${t2.target}\n\n`;
+    }
+
+    message += `⏱ Entry Type: ${getEntryTiming()}\n`;
+
+    console.log(message);
     await sendEmail(message);
 
-  } catch (error) {
-    console.error("❌ Error:", error.message);
+  } catch (err) {
+    console.error("❌ Error:", err.message);
   }
 }
 
