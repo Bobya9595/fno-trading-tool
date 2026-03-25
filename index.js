@@ -1,15 +1,12 @@
-import YahooFinance from "yahoo-finance2";
+import axios from "axios";
 import nodemailer from "nodemailer";
 
-const yahooFinance = new YahooFinance({
-  suppressNotices: ['yahooSurvey']
-});
-
-// ENV VARIABLES
+// 🔐 ENV VARIABLES (from GitHub secrets)
 const EMAIL = process.env.EMAIL;
 const APP_PASSWORD = process.env.APP_PASSWORD;
+const ACCESS_TOKEN = process.env.UPSTOX_TOKEN;
 
-// MAIL SETUP
+// 📩 MAIL
 const transporter = nodemailer.createTransport({
   service: "gmail",
   auth: {
@@ -22,86 +19,81 @@ async function sendEmail(message) {
   await transporter.sendMail({
     from: EMAIL,
     to: EMAIL,
-    subject: "📊 Smart Trade Alert",
+    subject: "📊 REAL TRADE ALERT",
     text: message
   });
 }
 
-// CORE LOGIC
-function getSignal(change) {
-  if (change > 1) return "CE";
-  if (change < -1) return "PE";
-  return null;
+// 📊 GET OPTION CHAIN
+async function getOptionChain(symbol) {
+  try {
+    const res = await axios.get(
+      `https://api.upstox.com/v2/option/chain`,
+      {
+        headers: {
+          Authorization: `Bearer ${ACCESS_TOKEN}`
+        },
+        params: {
+          instrument_key: symbol,
+          expiry_date: "nearest"
+        }
+      }
+    );
+
+    return res.data.data;
+  } catch (err) {
+    console.log("❌ Upstox API Error");
+    return null;
+  }
 }
 
-function getATM(price) {
-  return Math.round(price / 100) * 100;
+// 🧠 SMART LOGIC (OI BASED)
+function pickBestTrades(chain) {
+  if (!chain) return [];
+
+  // sort by OI
+  const sorted = chain.sort((a, b) =>
+    (b.ce?.oi || 0) - (a.ce?.oi || 0)
+  );
+
+  const top = sorted.slice(0, 2);
+
+  return top.map(item => ({
+    strike: item.strike_price,
+    ce: item.ce?.last_price,
+    pe: item.pe?.last_price,
+    oi: item.ce?.oi
+  }));
 }
 
-// BETTER ENTRY TIMING (9:15 logic)
-function getEntryTiming() {
-  const now = new Date();
-  const hour = now.getHours();
-  const min = now.getMinutes();
-
-  if (hour === 9 && min <= 20) return "OPEN BREAKOUT";
-  if (hour === 9 && min > 20) return "WAIT FOR RETEST";
-
-  return "MARKET CLOSED / LATE ENTRY";
-}
-
-// TRADE CALCULATION
-function buildTrade(strike, type) {
-  const premium = 100 + Math.floor(Math.random() * 40); // still approx
-
-  return {
-    strike,
-    type,
-    entry: premium,
-    sl: (premium * 0.8).toFixed(2),
-    target: (premium * 1.4).toFixed(2)
-  };
-}
-
-// MAIN BOT
+// 📊 MAIN BOT
 async function runBot() {
   try {
-    console.log("📊 PRO TRADE SYSTEM STARTED");
+    console.log("📊 REAL UPSTOX BOT");
 
-    const nifty = await yahooFinance.quote("^NSEI");
-    const banknifty = await yahooFinance.quote("^NSEBANK");
+    let message = "📊 REAL TRADE ALERT\n\n";
 
-    let message = "📊 TRADE ALERT\n\n";
+    // 🔹 NIFTY
+    const niftyChain = await getOptionChain("NSE_INDEX|Nifty 50");
+    const niftyTrades = pickBestTrades(niftyChain);
 
-    // ========= NIFTY =========
-    const niftySignal = getSignal(nifty.regularMarketChangePercent);
+    message += "📈 NIFTY\n\n";
 
-    if (niftySignal) {
-      const atm = getATM(nifty.regularMarketPrice);
+    niftyTrades.forEach((t, i) => {
+      message += `${i + 1}) BUY ${t.strike} CE\n`;
+      message += `Premium: ${t.ce}\nOI: ${t.oi}\n\n`;
+    });
 
-      const t1 = buildTrade(atm, niftySignal);
-      const t2 = buildTrade(atm + 100, niftySignal);
+    // 🔹 BANKNIFTY
+    const bankChain = await getOptionChain("NSE_INDEX|Nifty Bank");
+    const bankTrades = pickBestTrades(bankChain);
 
-      message += `📈 NIFTY\n\n`;
-      message += `1) BUY ${t1.strike} ${t1.type}\nEntry: ${t1.entry}\nSL: ${t1.sl}\nTarget: ${t1.target}\n\n`;
-      message += `2) BUY ${t2.strike} ${t2.type}\nEntry: ${t2.entry}\nSL: ${t2.sl}\nTarget: ${t2.target}\n\n`;
-    }
+    message += "📈 BANKNIFTY\n\n";
 
-    // ========= BANKNIFTY =========
-    const bankSignal = getSignal(banknifty.regularMarketChangePercent);
-
-    if (bankSignal) {
-      const atm = getATM(banknifty.regularMarketPrice);
-
-      const t1 = buildTrade(atm, bankSignal);
-      const t2 = buildTrade(atm + 100, bankSignal);
-
-      message += `📈 BANKNIFTY\n\n`;
-      message += `1) BUY ${t1.strike} ${t1.type}\nEntry: ${t1.entry}\nSL: ${t1.sl}\nTarget: ${t1.target}\n\n`;
-      message += `2) BUY ${t2.strike} ${t2.type}\nEntry: ${t2.entry}\nSL: ${t2.sl}\nTarget: ${t2.target}\n\n`;
-    }
-
-    message += `⏱ Entry Type: ${getEntryTiming()}\n`;
+    bankTrades.forEach((t, i) => {
+      message += `${i + 1}) BUY ${t.strike} CE\n`;
+      message += `Premium: ${t.ce}\nOI: ${t.oi}\n\n`;
+    });
 
     console.log(message);
     await sendEmail(message);
