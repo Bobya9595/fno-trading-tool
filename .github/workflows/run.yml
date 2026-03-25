@@ -1,8 +1,9 @@
 name: Run Trading Bot
 
 on:
+  workflow_dispatch:
   schedule:
-    - cron: "30 3 * * 1-5"  # 9 AM IST
+    - cron: "30 3 * * 1-5"
 
 jobs:
   run-bot:
@@ -10,15 +11,18 @@ jobs:
 
     steps:
       - name: Checkout repo
-        uses: actions/checkout@v3
+        uses: actions/checkout@v4
 
       - name: Setup Node
-        uses: actions/setup-node@v3
+        uses: actions/setup-node@v4
         with:
-          node-version: "18"
+          node-version: "20"
 
       - name: Install dependencies
         run: npm install
 
       - name: Run bot
+        env:
+          EMAIL: ${{ secrets.EMAIL }}
+          APP_PASSWORD: ${{ secrets.APP_PASSWORD }}
         run: node index.js
